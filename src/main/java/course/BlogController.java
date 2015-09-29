@@ -61,7 +61,7 @@ public class BlogController {
 
     public static void main(String[] args) throws IOException {
         if (args.length == 0) {
-            new BlogController("mongodb://localhost");
+            new BlogController("mongodb://mongolab_heroku:mongolab_heroku@ds051923.mongolab.com:51923/heroku_fk09fp18");
         }
         else {
             new BlogController(args[0]);
@@ -70,7 +70,7 @@ public class BlogController {
 
     public BlogController(String mongoURIString) throws IOException {
         final MongoClient mongoClient = new MongoClient(new MongoClientURI(mongoURIString));
-        final MongoDatabase blogDatabase = mongoClient.getDatabase("blog");
+        final MongoDatabase blogDatabase = mongoClient.getDatabase("heroku_fk09fp18");
 
         blogPostDAO = new BlogPostDAO(blogDatabase);
         userDAO = new UserDAO(blogDatabase);
