@@ -1,37 +1,18 @@
-/*
- * Copyright 2013-2015 MongoDB Inc.
-*
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- * 
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
-
-package course;
-
-import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.MongoCollection;
-import sun.misc.BASE64Encoder;
-
-import org.bson.Document;
-
+package course.model;
 
 import java.security.SecureRandom;
 
-import static com.mongodb.client.model.Filters.eq;
+import org.bson.Document;
 
-public class SessionDAO {
+import sun.misc.BASE64Encoder;
+
+import com.mongodb.client.MongoCollection;
+import com.mongodb.client.MongoDatabase;
+
+public class Session {
     private final MongoCollection<Document> sessionsCollection;
 
-    public SessionDAO(final MongoDatabase blogDatabase) {
+    public Session(final MongoDatabase blogDatabase) {
         sessionsCollection = blogDatabase.getCollection("sessions");
     }
 
@@ -61,8 +42,12 @@ public class SessionDAO {
         String sessionID = encoder.encode(randomBytes);
 
         // build the BSON object
-        Document session = new Document("username", username)
-                           .append("_id", sessionID);
+        Document session = new Document("username", username);
+
+        session.append("_id", sessionID);
+
+        sessionsCollection.deleteMany(
+                new Document("username",username));
 
         sessionsCollection.insertOne(session);
 
@@ -71,11 +56,13 @@ public class SessionDAO {
 
     // ends the session by deleting it from the sesisons table
     public void endSession(String sessionID) {
-        sessionsCollection.deleteOne(eq("_id", sessionID));
+        sessionsCollection.deleteOne
+                (new Document("_id", sessionID));
     }
 
     // retrieves the session from the sessions table
     public Document getSession(String sessionID) {
-        return sessionsCollection.find(eq("_id", sessionID)).first();
+        return sessionsCollection.find(
+                new Document("_id", sessionID)).first();
     }
 }

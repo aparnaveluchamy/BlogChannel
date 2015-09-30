@@ -1,26 +1,7 @@
-/*
- * Copyright 2013-2015 MongoDB Inc.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *   http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- *
- */
-
 package course;
 
 
-import static spark.Spark.get;
-import static spark.Spark.post;
-import static spark.Spark.setPort;
+import static spark.Spark.*;
 
 import java.io.IOException;
 import java.io.StringWriter;
@@ -42,6 +23,9 @@ import com.mongodb.MongoClient;
 import com.mongodb.MongoClientURI;
 import com.mongodb.client.MongoDatabase;
 
+import course.model.BlogPost;
+import course.model.Session;
+import course.model.User;
 import freemarker.template.Configuration;
 import freemarker.template.SimpleHash;
 import freemarker.template.Template;
@@ -55,9 +39,9 @@ import freemarker.template.TemplateException;
  */
 public class BlogController {
     private final Configuration cfg;
-    private final BlogPostDAO blogPostDAO;
-    private final UserDAO userDAO;
-    private final SessionDAO sessionDAO;
+    private final BlogPost blogPost;
+    private final User appUser;
+    private final Session session;
 
     public static void main(String[] args) throws IOException {
         if (args.length == 0) {
@@ -72,16 +56,25 @@ public class BlogController {
         final MongoClient mongoClient = new MongoClient(new MongoClientURI(mongoURIString));
         final MongoDatabase blogDatabase = mongoClient.getDatabase("heroku_fk09fp18");
 
-        blogPostDAO = new BlogPostDAO(blogDatabase);
-        userDAO = new UserDAO(blogDatabase);
-        sessionDAO = new SessionDAO(blogDatabase);
+        blogPost = new BlogPost(blogDatabase);
+        appUser = new User(blogDatabase);
+        session = new Session(blogDatabase);
 
         cfg = createFreemarkerConfiguration();
-        //setPort(8082);
+        getHerokuPort();
         initializeRoutes();
     }
 
-    abstract class FreemarkerBasedRoute extends Route {
+    private int getHerokuPort() 
+    {
+    	ProcessBuilder processBuilder = new ProcessBuilder();
+        if (processBuilder.environment().get("PORT") != null) {
+            return Integer.parseInt(processBuilder.environment().get("PORT"));
+        }
+		return 4567;
+	}
+
+	abstract class FreemarkerBasedRoute extends Route {
         final Template template;
 
         /**
@@ -116,9 +109,9 @@ public class BlogController {
         get(new FreemarkerBasedRoute("/", "blog_template.ftl") {
             @Override
             public void doHandle(Request request, Response response, Writer writer) throws IOException, TemplateException {
-                String username = sessionDAO.findUserNameBySessionId(getSessionCookie(request));
+                String username = session.findUserNameBySessionId(getSessionCookie(request));
 
-                List<Document> posts = blogPostDAO.findByDateDescending(10);
+                List<Document> posts = blogPost.findByDateDescending(10);
                 SimpleHash root = new SimpleHash();
 
                 root.put("myposts", posts);
@@ -138,7 +131,7 @@ public class BlogController {
 
                 System.out.println("/post: get " + permalink);
 
-                Document post = blogPostDAO.findByPermalink(permalink);
+                Document post = blogPost.findByPermalink(permalink);
                 if (post == null) {
                     response.redirect("/post_not_found");
                 }
@@ -175,14 +168,14 @@ public class BlogController {
                 if (validateSignup(username, password, verify, email, root)) {
                     // good user
                     System.out.println("Signup: Creating user with: " + username + " " + password);
-                    if (!userDAO.addUser(username, password, email)) {
+                    if (!appUser.addUser(username, password, email)) {
                         // duplicate user
                         root.put("username_error", "Username already in use, Please choose another");
                         template.process(root, writer);
                     }
                     else {
                         // good user, let's start a session
-                        String sessionID = sessionDAO.startSession(username);
+                        String sessionID = session.startSession(username);
                         System.out.println("Session ID is" + sessionID);
 
                         response.raw().addCookie(new Cookie("session", sessionID));
@@ -224,7 +217,7 @@ public class BlogController {
             protected void doHandle(Request request, Response response, Writer writer) throws IOException, TemplateException {
 
                 // get cookie
-                String username = sessionDAO.findUserNameBySessionId(getSessionCookie(request));
+                String username = session.findUserNameBySessionId(getSessionCookie(request));
 
                 if (username == null) {
                     // looks like a bad request. user is not logged in
@@ -249,7 +242,7 @@ public class BlogController {
                 String post = StringEscapeUtils.escapeHtml4(request.queryParams("body"));
                 String tags = StringEscapeUtils.escapeHtml4(request.queryParams("tags"));
 
-                String username = sessionDAO.findUserNameBySessionId(getSessionCookie(request));
+                String username = session.findUserNameBySessionId(getSessionCookie(request));
 
                 if (username == null) {
                     response.redirect("/login");    // only logged in users can post to blog
@@ -271,7 +264,7 @@ public class BlogController {
                     // substitute some <p> for the paragraph breaks
                     post = post.replaceAll("\\r?\\n", "<p>");
 
-                    String permalink = blogPostDAO.addPost(title, post, tagsArray, username);
+                    String permalink = blogPost.addPost(title, post, tagsArray, username);
 
                     // now redirect to the blog permalink
                     response.redirect("/post/" + permalink);
@@ -284,7 +277,7 @@ public class BlogController {
             protected void doHandle(Request request, Response response, Writer writer) throws IOException, TemplateException {
 
                 String cookie = getSessionCookie(request);
-                String username = sessionDAO.findUserNameBySessionId(cookie);
+                String username = session.findUserNameBySessionId(cookie);
 
                 if (username == null) {
                     System.out.println("welcome() can't identify the user, redirecting to signup");
@@ -311,7 +304,7 @@ public class BlogController {
                 String body = StringEscapeUtils.escapeHtml4(request.queryParams("commentBody"));
                 String permalink = request.queryParams("permalink");
 
-                Document post = blogPostDAO.findByPermalink(permalink);
+                Document post = blogPost.findByPermalink(permalink);
                 if (post == null) {
                     response.redirect("/post_not_found");
                 }
@@ -331,7 +324,7 @@ public class BlogController {
                     template.process(root, writer);
                 }
                 else {
-                    blogPostDAO.addPostComment(name, email, body, permalink);
+                    blogPost.addPostComment(name, email, body, permalink);
                     response.redirect("/post/" + permalink);
                 }
             }
@@ -361,12 +354,12 @@ public class BlogController {
 
                 System.out.println("Login: User submitted: " + username + "  " + password);
 
-                Document user = userDAO.validateLogin(username, password);
+                Document user = appUser.validateLogin(username, password);
 
                 if (user != null) {
 
                     // valid user, let's log them in
-                    String sessionID = sessionDAO.startSession(user.get("_id").toString());
+                    String sessionID = session.startSession(user.get("_id").toString());
 
                     if (sessionID == null) {
                         response.redirect("/internal_error");
@@ -396,11 +389,11 @@ public class BlogController {
             protected void doHandle(Request request, Response response, Writer writer)
                     throws IOException, TemplateException {
 
-                String username = sessionDAO.findUserNameBySessionId(getSessionCookie(request));
+                String username = session.findUserNameBySessionId(getSessionCookie(request));
                 SimpleHash root = new SimpleHash();
 
                 String tag = StringEscapeUtils.escapeHtml4(request.params(":thetag"));
-                List<Document> posts = blogPostDAO.findByTagDateDescending(tag);
+                List<Document> posts = blogPost.findByTagDateDescending(tag);
 
                 root.put("myposts", posts);
                 if (username != null) {
@@ -424,16 +417,14 @@ public class BlogController {
 
                 int ordinal = Integer.parseInt(commentOrdinalStr);
 
-                // TODO: check return or have checkSession throw
-                String username = sessionDAO.findUserNameBySessionId(getSessionCookie(request));
-                Document post = blogPostDAO.findByPermalink(permalink);
+                Document post = blogPost.findByPermalink(permalink);
 
                 //  if post not found, redirect to post not found error
                 if (post == null) {
                     response.redirect("/post_not_found");
                 }
                 else {
-                    blogPostDAO.likePost(permalink, ordinal);
+                    blogPost.likePost(permalink, ordinal);
 
                     response.redirect("/post/" + permalink);
                 }
@@ -462,7 +453,7 @@ public class BlogController {
                 }
                 else {
                     // deletes from session table
-                    sessionDAO.endSession(sessionID);
+                    session.endSession(sessionID);
 
                     // this should delete the cookie
                     Cookie c = getSessionCookieActual(request);
@@ -574,4 +565,5 @@ public class BlogController {
         retVal.setClassForTemplateLoading(BlogController.class, "/freemarker");
         return retVal;
     }
+    
 }
